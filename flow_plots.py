@@ -9,6 +9,7 @@ from sklearn.linear_model import LinearRegression
 import numpy as np
 import os
 from itertools import combinations
+from math import ceil
 
 # Input files
 input_files = [
@@ -88,7 +89,7 @@ def plot_gfp_rep_comparison(df, filename_prefix, r2_records):
     png_path = f"{filename_prefix}_scatter.png"
     plt.savefig(png_path, dpi=300)
     plt.close()
-  
+
     # === Interactive HTML ===
     plotly_fig = make_subplots(rows=1, cols=3, subplot_titles=labels)
 
@@ -184,27 +185,33 @@ for file in input_files:
 
     all_data.append(averaged_df)
 
-# Combine into one output table
+# Combine output table
 combined = pd.concat(all_data, ignore_index=True)
 
 # Save to Excel
 combined.to_excel("Per_File_Averaged_Replicates_Output.xlsx", index=False)
 
-# Save R² summary for all files
 r2_df = pd.DataFrame(r2_records)
 r2_df.to_csv("R2_Summary_All_Files.csv", index=False)
 
-# === Cross-file comparison settings ===
+# Store R² records 
 cross_r2_records = []
 
-def compare_sources_and_plot(df, group_label):
-    group_sources = df['Source File'].unique()
+def compare_sources_and_plot_group(df, group_label, html_filename):
+    sources = df['Source File'].unique()
+    pairs = list(combinations(sources, 2))
 
-    for source1, source2 in combinations(group_sources, 2):
+    cols = 2
+    rows = ceil(len(pairs) / cols)
+
+    fig_html = make_subplots(rows=rows, cols=cols,
+                             subplot_titles=[f"{a} vs {b}" for a, b in pairs])
+
+    current_row, current_col = 1, 1
+
+    for i, (source1, source2) in enumerate(pairs):
         df1 = df[df['Source File'] == source1][['Sample name', 'GFP -']].rename(columns={'GFP -': f'{source1}'})
         df2 = df[df['Source File'] == source2][['Sample name', 'GFP -']].rename(columns={'GFP -': f'{source2}'})
-
-        # Inner join on Sample name
         merged = pd.merge(df1, df2, on='Sample name')
         if merged.empty:
             continue
@@ -221,7 +228,7 @@ def compare_sources_and_plot(df, group_label):
         m = model.coef_[0]
         b = model.intercept_
 
-        # Save R² summary
+        # Record for summary
         cross_r2_records.append({
             "Group": group_label,
             "File A": source1,
@@ -231,63 +238,66 @@ def compare_sources_and_plot(df, group_label):
             "Intercept (b)": round(b, 4)
         })
 
-        # === Static plot ===
-        fig, ax = plt.subplots(figsize=(6, 6))
-        ax.scatter(x, y, alpha=0.7)
-        ax.plot(x, y_pred, color='red', linewidth=1.5)
-        ax.set_xlabel(f'{source1} (GFP -)')
-        ax.set_ylabel(f'{source2} (GFP -)')
-        ax.set_title(f'{source1} vs {source2}\ny = {m:.2f}x + {b:.2f}, R² = {r2:.3f}')
-        plt.tight_layout()
-        png_name = f'Compare_{source1}_vs_{source2}.png'.replace(" ", "_")
-        plt.savefig(png_name, dpi=300)
-        plt.close()
-
-        # === Interactive plot ===
-        fig_html = go.Figure()
-
+        # Scatter trace
         fig_html.add_trace(go.Scatter(
             x=x, y=y,
             mode='markers',
             text=names,
             hovertemplate="Sample: %{text}<br>X: %{x}<br>Y: %{y}<extra></extra>",
             marker=dict(size=6, color='blue'),
-            name='Samples'
-        ))
+            name=f"{source1} vs {source2}"
+        ), row=current_row, col=current_col)
 
+        # Best-fit line
         fig_html.add_trace(go.Scatter(
             x=x, y=y_pred,
             mode='lines',
             line=dict(color='red'),
-            name='Fit'
-        ))
+            showlegend=False
+        ), row=current_row, col=current_col)
+
+        # Annotation
+        annotation_text = f"y = {m:.2f}x + {b:.2f}<br>R² = {r2:.3f}"
+
+        xref = 'x domain' if i == 0 else f'x{i+1} domain'
+        yref = 'y domain' if i == 0 else f'y{i+1} domain'
 
         fig_html.add_annotation(
-            text=f"y = {m:.2f}x + {b:.2f}<br>R² = {r2:.3f}",
-            xref="paper", yref="paper",
-            x=0.99, y=0.01,
+            text=annotation_text,
+            xref = xref,
+            yref = yref,
+            x=0.99,
+            y=0.01,
             showarrow=False,
             font=dict(size=10),
-            align='right'
+            align='right',
+            row=current_row,
+            col=current_col
         )
 
-        fig_html.update_layout(
-            title=f'GFP -: {source1} vs {source2}',
-            xaxis_title=f'{source1} (GFP -)',
-            yaxis_title=f'{source2} (GFP -)',
-            width=600, height=600
-        )
+        # Update position
+        if current_col == cols:
+            current_row += 1
+            current_col = 1
+        else:
+            current_col += 1
 
-        html_name = f'Compare_{source1}_vs_{source2}.html'.replace(" ", "_")
-        fig_html.write_html(html_name)
+    fig_html.update_layout(
+        height=300 * rows,
+        width=1200,
+        title_text=f"GFP - Cross-File Comparisons: {group_label}",
+        showlegend=False
+    )
 
-# === Separate and compare 'group1' and 'group2' groups ===
-df_group1 = combined[combined['Source File'].str.contains("group1")]
-df_group2 = combined[combined['Source File'].str.contains("group2")]
+    fig_html.write_html(html_filename)
 
-compare_sources_and_plot(df_group1, 'group 1')
-compare_sources_and_plot(df_group2, 'group 2')
+# === Run grouped comparisons ===
+df_1 = combined[combined['Source File'].str.contains("1")]
+df_2 = combined[combined['Source File'].str.contains("2")]
 
-# === Save combined R² summary ===
+compare_sources_and_plot_group(df_1, '1', 'All_Comparisons_1.html')
+compare_sources_and_plot_group(df_2, '2', 'All_Comparisons_2.html')
+
+# === Save R² summary ===
 r2_cross_df = pd.DataFrame(cross_r2_records)
 r2_cross_df.to_csv("CrossFile_GFP_Comparisons_R2_Summary.csv", index=False)
