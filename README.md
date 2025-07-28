@@ -1,5 +1,3 @@
-# List of scripts
-
-lat.py: find latitude of...
+# List of completed scripts
 
 flow scripts: for processing and plotting flow cytometry data
