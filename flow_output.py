@@ -1,52 +1,90 @@
 import pandas as pd
-from pathlib import Path
+import re
 
-# Input files
-input_files = [
-    "File1.xlsx",
-    "File2.xlsx",
-    "File3.xlsx",
-    "File4.xlsx",
-    "File5.xlsx",
-    "File6.xlsx",
-    "File7.xlsx",
-    "File8.xlsx",
-    "File9.xlsx",
-    "File10.xlsx"
-]
+# Load the .xls file (requires 'xlrd' package to be installed)
+# Install with: pip install xlrd
+df = pd.read_excel("File.xls", engine="xlrd")
 
-metrics = ['mScar +', 'Mean', 'GFP -']
-all_data = []
+# Extract well identifiers (e.g., B2, C3, etc.)
+df['Well'] = df['Name'].str.extract(r'\b([A-H]\d{1,2})\b')
 
-for file in input_files:
-    df = pd.read_excel(file)
+# Store blocks of data
+blocks = []
 
-    # Check required column
-    if 'Sample name' not in df.columns:
-        print(f"Skipping {file}: 'Sample name' column not found.")
-        continue
+i = 0
+while i < len(df):
+    row = df.iloc[i]
+    name = str(row['Name'])
 
-    # Prepare new dataframe to hold averages
-    averaged_df = pd.DataFrame()
-    averaged_df['Sample name'] = df['Sample name']
+    if name.endswith("mScarlett pos"):
+        block = {}
+        block['Well'] = row['Well']
+        block['mScar +'] = row['Statistic']
+        block['mScar cells'] = row['#Cells']
 
-    for metric in metrics:
-        # Find replicate columns (e.g., "mScar + (rep 1)", "mScar + (rep 2)", etc.)
-        rep_cols = [col for col in df.columns if col.startswith(metric)]
-        if not rep_cols:
-            print(f"No replicate columns found for '{metric}' in {file}")
-            continue
+        # Try to find Mean in next few rows
+        found_mean = False
+        for j in range(i + 1, min(i + 4, len(df))):
+            mean_row = df.iloc[j]
+            mean_str = str(mean_row['Name'])
+            match = re.search(r"Mean\s*:\s*YL1-A\s*=\s*([\d\.]+)", mean_str)
+            if match:
+                block['Mean'] = float(match.group(1))
+                found_mean = True
+                break
 
-        # Row-wise average of the replicate columns
-        averaged_df[metric] = df[rep_cols].mean(axis=1, skipna=True)
+        if not found_mean:
+            block['Mean'] = None  # Leave blank if not found
 
-    # Add filename identifier
-    averaged_df['Source File'] = Path(file).stem
+        # Search for corresponding GFP neg row
+        for k in range(i + 1, min(i + 10, len(df))):
+            gfp_row = df.iloc[k]
+            gfp_name = str(gfp_row['Name'])
+            if gfp_name.endswith("GFP neg"):
+                block['GFP -'] = gfp_row['Statistic']
+                block['GFP - cells'] = gfp_row['#Cells']
+                break
 
-    all_data.append(averaged_df)
+        blocks.append(block)
+        i = k  # Skip ahead
+    else:
+        i += 1
 
-# Combine into one output table
-combined = pd.concat(all_data, ignore_index=True)
+# Convert to DataFrame
+full_result = pd.DataFrame(blocks)
+#result = full_result[full_result['mScar +'] >= 40]
+result = full_result[full_result['mScar +'] >= 40].copy()
 
-# Save to Excel
-combined.to_excel("Per_File_Averaged_Replicates_Output.xlsx", index=False)
+removed = full_result[full_result['mScar +'] < 40]
+removed.to_excel("File_removed_samples.xlsx", index = False)
+
+# Sort wells by column
+result['Row'] = result['Well'].str.extract(r'([A-H])')
+result['Col'] = result['Well'].str.extract(r'(\d{1,2})').astype(int)
+result['OriginalIndex'] = result.index  # Preserve input order
+
+# Re-sort
+result = result.sort_values(by=['Col', 'Row', 'OriginalIndex']).drop(columns=['Row', 'Col', 'OriginalIndex'])
+
+# Final output
+result.to_excel("File_filtered_output.xlsx", index=False)
+
+# === Second output: Wide format with all metrics and replicates (using filtered result) ===
+
+# Add replicate count per well
+result['Replicate'] = result.groupby('Well').cumcount() + 1
+
+# Pivot to wide format
+pivoted = result.pivot(index='Well', columns='Replicate')
+
+# Flatten multi-index columns
+pivoted.columns = [f"{metric} (rep {rep})" for metric, rep in pivoted.columns]
+pivoted.reset_index(inplace=True)
+
+# Sort wells B2, C2, ..., B3, C3, ...
+pivoted['Row'] = pivoted['Well'].str.extract(r'([A-H])')
+pivoted['Col'] = pivoted['Well'].str.extract(r'(\d{1,2})').astype(int)
+pivoted = pivoted.sort_values(by=['Col', 'Row']).drop(columns=['Row', 'Col'])
+
+# Save wide output
+pivoted.to_excel("File_wide_output_all_metrics.xlsx", index=False)
