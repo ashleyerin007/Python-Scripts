@@ -1,1 +1,1 @@
-# Sneks
+# List of scripts
