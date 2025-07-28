@@ -172,7 +172,7 @@ for file in input_files:
 
     for metric in metrics:
         # Find replicate columns (e.g., "mScar + (rep 1)", "mScar + (rep 2)", etc.)
-        rep_cols = [col for col in df.columns if col.startswith(metric)]
+        rep_cols = [col for col in df.columns if col.startswith(metric + ' (')]
         if not rep_cols:
             print(f"No replicate columns found for '{metric}' in {file}")
             continue
@@ -275,6 +275,19 @@ def compare_sources_and_plot_group(df, group_label, html_filename):
             col=current_col
         )
 
+        # === Save Static Plot ===
+        # Create individual matplotlib plot for this comparison
+        plt.figure(figsize=(5, 4))
+        plt.scatter(x, y, alpha=0.7)
+        plt.plot(x, y_pred, color='red', linewidth=1.5)
+        plt.xlabel(source1)
+        plt.ylabel(source2)
+        plt.title(f"{source1} vs {source2}\ny = {m:.2f}x + {b:.2f}, R² = {r2:.3f}")
+        plt.tight_layout()
+        static_filename = f"{source1}_vs_{source2}_GFP_Cross.png".replace(" ", "_")
+        plt.savefig(static_filename, dpi=300)
+        plt.close()
+
         # Update position
         if current_col == cols:
             current_row += 1
@@ -292,11 +305,11 @@ def compare_sources_and_plot_group(df, group_label, html_filename):
     fig_html.write_html(html_filename)
 
 # === Run grouped comparisons ===
-df_1 = combined[combined['Source File'].str.contains("1")]
-df_2 = combined[combined['Source File'].str.contains("2")]
+df1 = combined[combined['Source File'].str.contains("1")]
+df2 = combined[combined['Source File'].str.contains("2")]
 
-compare_sources_and_plot_group(df_1, '1', 'All_Comparisons_1.html')
-compare_sources_and_plot_group(df_2, '2', 'All_Comparisons_2.html')
+compare_sources_and_plot_group(df1, '1', 'All_Comparisons_1.html')
+compare_sources_and_plot_group(df2, '2', 'All_Comparisons_2.html')
 
 # === Save R² summary ===
 r2_cross_df = pd.DataFrame(cross_r2_records)
